@@ -1,0 +1,68 @@
+{
+  "name": "@herrhelms/bulk-model-switcher",
+  "version": "0.0.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "A Paperclip plugin to bulk-reconfigure agents. Multiselect any set of a company's agents and set their model and reasoning effort in one action — every other adapter setting is preserved. Adapter type is never changed.",
+  "author": "@herrhelms",
+  "homepage": "https://github.com/herrhelms/bulk-model-switcher#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/herrhelms/bulk-model-switcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/herrhelms/bulk-model-switcher/issues"
+  },
+  "type": "module",
+  "main": "dist/worker.js",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "paperclipPlugin": {
+    "manifest": "dist/manifest.js",
+    "worker": "dist/worker.js",
+    "ui": "dist/ui"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@paperclipai/plugin-sdk": "^2026.722.0"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@paperclipai/plugin-sdk": "^2026.722.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/node": "^22.9.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "paperclip",
+    "paperclip-plugin",
+    "agents",
+    "model",
+    "reasoning-effort",
+    "bulk-edit",
+    "adapter-config",
+    "governance"
+  ],
+  "license": "MIT"
+}
