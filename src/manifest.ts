@@ -26,7 +26,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "bulk-model-switcher",
   apiVersion: 1,
-  version: "0.0.1",
+  version: "0.0.2",
   displayName: "Bulk Model Switcher",
   description:
     "Bulk-reconfigure agents. Multiselect any set of a company's agents and set their model and reasoning effort in one action — every other adapter setting is preserved, and the adapter type is never changed.",

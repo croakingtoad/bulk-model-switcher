@@ -521,7 +521,16 @@ export function ModelSwitcherPage(): JSX.Element {
     setResults(nextResults);
     setApplying(false);
 
-    const okCount = settled.filter(([, r]) => r.ok).length;
+    // Clear the selection for agents that applied cleanly so the operator gets a
+    // fresh slate; keep any failures selected so they can be retried in place.
+    const okIds = new Set(settled.filter(([, r]) => r.ok).map(([id]) => id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of okIds) next.delete(id);
+      return next;
+    });
+
+    const okCount = okIds.size;
     const failCount = settled.length - okCount;
     if (failCount === 0) {
       toast?.({

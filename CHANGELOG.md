@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.2
+
+- After **Apply**, successfully-updated agents are cleared from the selection
+  for a fresh slate; any that failed stay selected so you can retry them.
+
 ## 0.0.1
 
 Initial release.
