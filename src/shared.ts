@@ -55,6 +55,8 @@ export interface RosterRow {
   model: string | null;
   /** Current adapterConfig.effort, or null when unset. */
   effort: string | null;
+  /** Agent UUID this agent reports to, or null when unset. */
+  reportsTo: string | null;
 }
 
 export interface RosterData {
@@ -155,4 +157,29 @@ export function describeSelection(selection: ApplySelection): string {
   if (selection.model !== KEEP) parts.push(`model → ${selection.model}`);
   if (selection.effort !== KEEP) parts.push(`effort → ${selection.effort}`);
   return parts.length > 0 ? parts.join(", ") : "no changes";
+}
+
+// ---------------------------------------------------------------------------
+// ReportsTo patch
+// ---------------------------------------------------------------------------
+
+/** Sentinel meaning "leave reportsTo unchanged". */
+export const KEEP_REPORTS_TO = "__keep_reports_to__" as const;
+export type KeepReportsTo = typeof KEEP_REPORTS_TO;
+
+/** Sentinel meaning "clear the reportsTo relationship". */
+export const CLEAR_REPORTS_TO = "__clear_reports_to__" as const;
+export type ClearReportsTo = typeof CLEAR_REPORTS_TO;
+
+export type ReportsToSelection = string | KeepReportsTo | ClearReportsTo;
+
+/**
+ * Build the reportsTo patch body. Pass null to clear, a UUID to set.
+ * Returns null when selection is KEEP_REPORTS_TO (no-op).
+ */
+export function buildReportsToPatch(
+  selection: ReportsToSelection,
+): { reportsTo: string | null } | null {
+  if (selection === KEEP_REPORTS_TO) return null;
+  return { reportsTo: selection === CLEAR_REPORTS_TO ? null : selection };
 }
