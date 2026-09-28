@@ -478,7 +478,7 @@ export function ModelSwitcherPage(): JSX.Element {
   const [budget, setBudget] = useState<string>("");
 
   // Skills state
-  const [availableSkillKeys, setAvailableSkillKeys] = useState<string[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<Array<{ key: string; label: string }>>([]);
   const [skillsToAdd, setSkillsToAdd] = useState<string[]>([]);
   const [skillsToRemove, setSkillsToRemove] = useState<string[]>([]);
 
@@ -498,17 +498,26 @@ export function ModelSwitcherPage(): JSX.Element {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: unknown) => {
         const arr = Array.isArray(data) ? data : [];
-        setAvailableSkillKeys(
-          arr
-            .map((s: unknown) =>
-              typeof s === "string"
-                ? s
-                : s && typeof (s as Record<string, unknown>).key === "string"
-                  ? ((s as Record<string, unknown>).key as string)
-                  : "",
-            )
-            .filter(Boolean),
-        );
+        const options = arr
+          .map((s: unknown) => {
+            if (!s || typeof s !== "object") return null;
+            const o = s as Record<string, unknown>;
+            const key = typeof o.key === "string" ? o.key : "";
+            if (!key) return null;
+            const name = typeof o.name === "string" && o.name ? o.name : key.split("/").pop() ?? key;
+            const author = typeof o.authorName === "string" && o.authorName
+              ? o.authorName
+              : typeof o.sourceBadge === "string" && o.sourceBadge === "paperclip"
+                ? "Paperclip"
+                : null;
+            const version = typeof o.packageVersion === "string" && o.packageVersion
+              ? `v${o.packageVersion}`
+              : null;
+            const suffix = [author ? `by ${author}` : null, version].filter(Boolean).join(" · ");
+            return { key, label: suffix ? `${name} (${suffix})` : name };
+          })
+          .filter((x): x is { key: string; label: string } => x !== null);
+        setAvailableSkills(options);
       })
       .catch(() => {});
   }, [companyId]);
@@ -518,25 +527,34 @@ export function ModelSwitcherPage(): JSX.Element {
     [selectable, selected],
   );
 
-  // Add candidates: available skills not already on ALL selected agents
+  // Build a key→label map for display (covers both available and agent-current skills).
+  const skillLabelMap = useMemo(
+    () => new Map(availableSkills.map((s) => [s.key, s.label])),
+    [availableSkills],
+  );
+
+  // Add candidates: available skills not already on ALL selected agents.
   const addCandidates = useMemo(() => {
-    if (availableSkillKeys.length === 0) return [];
+    if (availableSkills.length === 0) return [];
     const onAll =
       selectedAgents.length === 0
         ? new Set<string>()
         : new Set(
-            availableSkillKeys.filter((k) =>
-              selectedAgents.every((a) => a.desiredSkills.includes(k)),
-            ),
+            availableSkills
+              .map((s) => s.key)
+              .filter((k) => selectedAgents.every((a) => a.desiredSkills.includes(k))),
           );
-    return availableSkillKeys.filter((k) => !onAll.has(k));
-  }, [availableSkillKeys, selectedAgents]);
+    return availableSkills.filter((s) => !onAll.has(s.key));
+  }, [availableSkills, selectedAgents]);
 
-  // Remove candidates: skills present on at least one selected agent
-  const removeCandidates = useMemo(
-    () => [...new Set(selectedAgents.flatMap((a) => a.desiredSkills))].sort(),
-    [selectedAgents],
-  );
+  // Remove candidates: skills present on at least one selected agent.
+  const removeCandidates = useMemo(() => {
+    const keys = [...new Set(selectedAgents.flatMap((a) => a.desiredSkills))].sort();
+    return keys.map((k) => ({
+      key: k,
+      label: skillLabelMap.get(k) ?? (k.split("/").pop() ?? k),
+    }));
+  }, [selectedAgents, skillLabelMap]);
 
   // Computed patch values
   const selection: ApplySelection = { model, effort, role };
@@ -858,7 +876,7 @@ export function ModelSwitcherPage(): JSX.Element {
             />
           </div>
 
-          {availableSkillKeys.length > 0 && (
+          {availableSkills.length > 0 && (
             <>
               <div style={{ ...styles.field, minWidth: 180 }}>
                 <label style={styles.label}>Add skills</label>
@@ -871,8 +889,11 @@ export function ModelSwitcherPage(): JSX.Element {
                   style={styles.multiSelect}
                   aria-label="Skills to add"
                 >
-                  {addCandidates.map((k) => <option key={k} value={k}>{k}</option>)}
+                  {addCandidates.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
                 </select>
+                <span style={{ ...styles.muted, fontSize: 12, marginTop: 4, display: "block" }}>
+                  Ctrl-click (⌘-click on Mac) to select multiple
+                </span>
               </div>
               <div style={{ ...styles.field, minWidth: 180 }}>
                 <label style={styles.label}>Remove skills</label>
@@ -886,8 +907,11 @@ export function ModelSwitcherPage(): JSX.Element {
                   disabled={removeCandidates.length === 0}
                   aria-label="Skills to remove"
                 >
-                  {removeCandidates.map((k) => <option key={k} value={k}>{k}</option>)}
+                  {removeCandidates.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
                 </select>
+                <span style={{ ...styles.muted, fontSize: 12, marginTop: 4, display: "block" }}>
+                  Ctrl-click (⌘-click on Mac) to select multiple
+                </span>
               </div>
             </>
           )}
