@@ -4,18 +4,12 @@
 //
 // The plugin's whole job is small and mechanical: for a set of agents, overwrite
 // just two keys inside each agent's `adapterConfig` — `model` and `effort` —
-// and leave every other key untouched. These helpers encode that contract and
-// the curated option vocabulary the UI offers.
+// and leave every other key untouched, and optionally set the top-level `role`.
+// These helpers encode that contract and the curated option vocabulary the UI offers.
 
 // ---------------------------------------------------------------------------
 // Curated option vocabulary
 // ---------------------------------------------------------------------------
-//
-// Reasoning models are the bare names; the non-reasoning counterparts carry the
-// `-instruct` suffix. Effort maps to the adapter's reasoning-effort setting.
-// The table still DISPLAYS whatever value an agent currently has, even if it
-// predates or diverges from this list — the curated set only constrains what a
-// bulk-apply can SET.
 
 export const MODEL_OPTIONS = [
   "coder",
@@ -31,6 +25,23 @@ export type ModelOption = (typeof MODEL_OPTIONS)[number];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"] as const;
 
 export type EffortOption = (typeof EFFORT_OPTIONS)[number];
+
+export const ROLE_OPTIONS = [
+  "ceo",
+  "cto",
+  "cmo",
+  "cfo",
+  "security",
+  "engineer",
+  "designer",
+  "pm",
+  "qa",
+  "devops",
+  "researcher",
+  "general",
+] as const;
+
+export type AgentRole = (typeof ROLE_OPTIONS)[number];
 
 // The two adapterConfig keys this plugin is allowed to touch. Everything else
 // in adapterConfig is out of scope and preserved by the merge write.
@@ -79,8 +90,7 @@ export interface ModelEffort {
 /**
  * Pull the current model + effort out of an agent's adapterConfig. Tolerant of
  * anything: missing keys, non-string values, or a non-object config all
- * degrade to null rather than throwing. Never assumes a particular key exists
- * (the recurring pricing-plugin crash class was exactly this).
+ * degrade to null rather than throwing.
  */
 export function extractModelEffort(adapterConfig: unknown): ModelEffort {
   if (!adapterConfig || typeof adapterConfig !== "object") {
@@ -98,8 +108,7 @@ export function extractModelEffort(adapterConfig: unknown): ModelEffort {
 
 /**
  * A bulk-apply selection: either a concrete value to set, or the sentinel
- * `KEEP` meaning "leave this field as it is on every selected agent." This lets
- * an operator change ONLY model, ONLY effort, or both in one action.
+ * `KEEP` meaning "leave this field as it is on every selected agent."
  */
 export const KEEP = "__keep__" as const;
 export type Keep = typeof KEEP;
@@ -107,12 +116,12 @@ export type Keep = typeof KEEP;
 export interface ApplySelection {
   model: ModelOption | Keep;
   effort: EffortOption | Keep;
+  role: AgentRole | Keep;
 }
 
 /**
  * Build the partial `adapterConfig` to send, containing only the fields the
- * operator chose to change. Returns null when nothing is selected (both KEEP) —
- * callers use that to disable Apply and to no-op an agent.
+ * operator chose to change. Returns null when nothing is selected (both KEEP).
  */
 export function buildAdapterConfigPatch(
   selection: ApplySelection,
@@ -124,10 +133,17 @@ export function buildAdapterConfigPatch(
 }
 
 /**
+ * Build the `{ role }` patch for a top-level role change. Returns null when
+ * role is KEEP.
+ */
+export function buildRolePatch(role: AgentRole | Keep): { role: AgentRole } | null {
+  return role !== KEEP ? { role } : null;
+}
+
+/**
  * The full request body for `PATCH /api/agents/:id`. `replaceAdapterConfig:
  * false` is the load-bearing flag — it makes the host MERGE the supplied keys
- * into the existing adapterConfig instead of replacing the whole object, so the
- * other ~11 keys (instructions paths, skill sync, turn limits…) survive.
+ * into the existing adapterConfig instead of replacing the whole object.
  */
 export interface AgentPatchBody {
   adapterConfig: Record<string, string>;
@@ -154,5 +170,6 @@ export function describeSelection(selection: ApplySelection): string {
   const parts: string[] = [];
   if (selection.model !== KEEP) parts.push(`model → ${selection.model}`);
   if (selection.effort !== KEEP) parts.push(`effort → ${selection.effort}`);
+  if (selection.role !== KEEP) parts.push(`role → ${selection.role}`);
   return parts.length > 0 ? parts.join(", ") : "no changes";
 }

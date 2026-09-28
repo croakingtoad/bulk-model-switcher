@@ -8,15 +8,17 @@ import {
 import {
   MODEL_OPTIONS,
   EFFORT_OPTIONS,
+  ROLE_OPTIONS,
   KEEP,
   UNCONFIGURABLE_STATUSES,
   buildAdapterConfigPatch,
-  buildAgentPatchBody,
+  buildRolePatch,
   agentPatchUrl,
   describeSelection,
   type ApplySelection,
   type EffortOption,
   type ModelOption,
+  type AgentRole,
   type RosterData,
   type RosterRow,
 } from "../shared.js";
@@ -25,7 +27,8 @@ import {
 // Bulk Model Switcher — plugin UI (single page export: ModelSwitcherPage).
 //
 // Mounts at /:companyPrefix/bulk-model-switcher. Multiselect any set of the
-// company's agents and set their model and/or reasoning effort in one action.
+// company's agents and set their model, reasoning effort, and/or role in one
+// action.
 //
 // Read  path: usePluginData("roster") ← worker's ctx.agents.list.
 // Write path: same-origin `PATCH /api/agents/:id` from THIS page, riding the
@@ -40,15 +43,10 @@ import {
 // subtree inherits the host's light/dark class for free — no plugin palette.
 // -----------------------------------------------------------------------------
 
-// The page slot's routePath mounts at /:companyPrefix/bulk-model-switcher.
-// linkProps() takes a company-relative path (leading slash, no prefix) and the
-// host resolves the active company prefix at render time.
 const PAGE_HREF = "/bulk-model-switcher";
 
 // ---- Error helper -----------------------------------------------------------
 
-// A same-origin fetch that failed returns a Response; the host may wrap the
-// error body as JSON or a JSON-quoted string. Reduce it to a readable line.
 async function readErrorMessage(res: Response): Promise<string> {
   let text = "";
   try {
@@ -66,7 +64,7 @@ async function readErrorMessage(res: Response): Promise<string> {
     }
     if (typeof parsed === "string" && parsed) return parsed;
   } catch {
-    /* not JSON — fall through to raw text */
+    /* not JSON */
   }
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
@@ -137,7 +135,6 @@ const styles = {
     fontSize: 13,
     fontFamily: FONT,
     cursor: "pointer",
-    // Drop the platform chevron; ChevronSelect overlays a themed one instead.
     appearance: "none",
     WebkitAppearance: "none",
     MozAppearance: "none",
@@ -227,8 +224,6 @@ function roleLabel(row: RosterRow): string | null {
   return null;
 }
 
-// Lucide `hat-glasses` (24×24 stroke icon), rendered at the host's 16px nav size.
-// stroke="currentColor" so it inherits the link's muted→foreground color.
 function HatGlassesIcon(): JSX.Element {
   return (
     <svg
@@ -253,23 +248,13 @@ function HatGlassesIcon(): JSX.Element {
   );
 }
 
-// The exact class string the host uses for its own sidebar links (copied from a
-// live "See all agents" entry), so the plugin link is pixel-identical: same
-// size, weight, muted colour, padding, radius, and hover treatment.
 const HOST_NAV_LINK_CLASS =
   "flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 " +
   "text-(length:--text-compact) font-medium text-muted-foreground transition-colors " +
   "hover:bg-accent/50 hover:text-foreground";
 
 // =============================================================================
-// ModelSwitcherSidebar — left-nav entry that links to the page.
-//
-// The host mounts plugin `sidebar` slots at the end of the WORK group; there's
-// no manifest option to target the AGENTS group. Since the plugin UI is trusted,
-// same-origin host code, we relocate our own link node to sit right after the
-// "See all agents" entry, and keep it there with a MutationObserver so it
-// survives host re-renders (badge updates, navigation, etc.). If the agents
-// group isn't present, the link simply stays where the host put it.
+// ModelSwitcherSidebar
 // =============================================================================
 export function ModelSwitcherSidebar(): JSX.Element {
   const nav = useHostNavigation();
@@ -279,8 +264,6 @@ export function ModelSwitcherSidebar(): JSX.Element {
   useEffect(() => {
     const link = linkRef.current;
     if (!link) return;
-    // The host wraps each plugin sidebar item in its own container; once we move
-    // the link out, hide that now-empty wrapper so it leaves no gap in WORK.
     const originalWrapper = link.parentElement;
     let cancelled = false;
 
@@ -288,7 +271,7 @@ export function ModelSwitcherSidebar(): JSX.Element {
       if (cancelled) return;
       const seeAll = document.querySelector<HTMLAnchorElement>('a[href$="/agents/all"]');
       if (!seeAll || !seeAll.parentElement) return;
-      if (seeAll.nextElementSibling === link) return; // already in position
+      if (seeAll.nextElementSibling === link) return;
       seeAll.parentElement.insertBefore(link, seeAll.nextSibling);
       if (
         originalWrapper &&
@@ -315,7 +298,7 @@ export function ModelSwitcherSidebar(): JSX.Element {
       ref={linkRef}
       className={HOST_NAV_LINK_CLASS}
       style={{ textDecoration: "none" }}
-      title="Bulk-set agents' model and reasoning effort"
+      title="Bulk-set agents' model, reasoning effort, and role"
     >
       <HatGlassesIcon />
       Bulk Model Switcher
@@ -324,12 +307,7 @@ export function ModelSwitcherSidebar(): JSX.Element {
 }
 
 // =============================================================================
-// ModelSwitcherSettings — renders on the plugin's settings screen.
-//
-// The plugin has no configurable options, so instead of an empty config form
-// this slot is a signpost: it tells the operator what the plugin does and links
-// straight to the page. `linkProps(PAGE_HREF)` resolves the active company
-// prefix, so the same build works for every company.
+// ModelSwitcherSettings
 // =============================================================================
 export function ModelSwitcherSettings(): JSX.Element {
   const nav = useHostNavigation();
@@ -339,8 +317,8 @@ export function ModelSwitcherSettings(): JSX.Element {
       <h2 style={styles.sectionTitle}>Bulk Model Switcher</h2>
       <p style={{ ...styles.muted, lineHeight: 1.5 }}>
         There's nothing to configure here. Bulk Model Switcher lives on its own
-        page, where you can multiselect this company's agents and set their model
-        and reasoning effort in one action. Every other adapter setting is
+        page, where you can multiselect this company's agents and set their model,
+        reasoning effort, and role in one action. Every other adapter setting is
         preserved, and the adapter type is never changed.
       </p>
       <div>
@@ -363,10 +341,6 @@ export function ModelSwitcherSettings(): JSX.Element {
   );
 }
 
-// A native <select> with the platform chevron removed and a single themed
-// chevron overlaid on the right — so both dropdowns read as one consistent
-// control instead of the OS default. The overlay is pointer-events:none so
-// clicks still open the native menu.
 function ChevronSelect(props: {
   id: string;
   value: string;
@@ -425,7 +399,6 @@ export function ModelSwitcherPage(): JSX.Element {
   const companyName = roster.data?.companyName ?? null;
   const loading = roster.loading && !roster.data;
 
-  // Which agents can be selected (terminated agents can't be reconfigured).
   const selectable = useMemo(
     () => agents.filter((a) => !UNCONFIGURABLE_STATUSES.has(a.status)),
     [agents],
@@ -435,20 +408,20 @@ export function ModelSwitcherPage(): JSX.Element {
     [selectable],
   );
 
-  // Selection state.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [model, setModel] = useState<ModelOption | typeof KEEP>(KEEP);
   const [effort, setEffort] = useState<EffortOption | typeof KEEP>(KEEP);
+  const [role, setRole] = useState<AgentRole | typeof KEEP>(KEEP);
 
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Map<string, ApplyResult>>(new Map());
 
-  const selection: ApplySelection = { model, effort };
+  const selection: ApplySelection = { model, effort, role };
   const patch = buildAdapterConfigPatch(selection);
+  const rolePatch = buildRolePatch(role);
   const selectedCount = selected.size;
-  const canApply = !!patch && selectedCount > 0 && !applying;
+  const canApply = (!!patch || !!rolePatch) && selectedCount > 0 && !applying;
 
-  // Changing selection or target values clears stale per-agent results.
   const resetTransient = useCallback(() => {
     setResults(new Map());
   }, []);
@@ -477,28 +450,29 @@ export function ModelSwitcherPage(): JSX.Element {
   }, [allSelected, selectableIds, resetTransient]);
 
   const onModelChange = useCallback(
-    (v: string) => {
-      setModel(v as ModelOption | typeof KEEP);
-      resetTransient();
-    },
+    (v: string) => { setModel(v as ModelOption | typeof KEEP); resetTransient(); },
     [resetTransient],
   );
   const onEffortChange = useCallback(
-    (v: string) => {
-      setEffort(v as EffortOption | typeof KEEP);
-      resetTransient();
-    },
+    (v: string) => { setEffort(v as EffortOption | typeof KEEP); resetTransient(); },
+    [resetTransient],
+  );
+  const onRoleChange = useCallback(
+    (v: string) => { setRole(v as AgentRole | typeof KEEP); resetTransient(); },
     [resetTransient],
   );
 
-  // Apply — a single click performs the bulk PATCH on every selected agent.
-  // The action is explicit (you picked the agents, the model/effort, and hit
-  // Apply) and fully reversible, so there's no extra confirm step in the way.
   const doApply = useCallback(async () => {
-    if (!patch || selectedCount === 0 || applying) return;
+    if ((!patch && !rolePatch) || selectedCount === 0 || applying) return;
     setApplying(true);
 
-    const body = JSON.stringify(buildAgentPatchBody(patch));
+    // Build one combined PATCH body per agent — adapterConfig merge + optional
+    // top-level role — so each agent gets exactly one request.
+    const bodyObj: Record<string, unknown> = {};
+    if (patch) { bodyObj.adapterConfig = patch; bodyObj.replaceAdapterConfig = false; }
+    if (rolePatch) Object.assign(bodyObj, rolePatch);
+    const body = JSON.stringify(bodyObj);
+
     const ids = [...selected];
     const settled = await Promise.all(
       ids.map(async (id): Promise<[string, ApplyResult]> => {
@@ -521,8 +495,6 @@ export function ModelSwitcherPage(): JSX.Element {
     setResults(nextResults);
     setApplying(false);
 
-    // Clear the selection for agents that applied cleanly so the operator gets a
-    // fresh slate; keep any failures selected so they can be retried in place.
     const okIds = new Set(settled.filter(([, r]) => r.ok).map(([id]) => id));
     setSelected((prev) => {
       const next = new Set(prev);
@@ -546,10 +518,10 @@ export function ModelSwitcherPage(): JSX.Element {
       });
     }
 
-    // Pull fresh current-value columns so the table reflects what stuck.
     roster.refresh?.();
   }, [
     patch,
+    rolePatch,
     selectedCount,
     applying,
     selected,
@@ -568,8 +540,8 @@ export function ModelSwitcherPage(): JSX.Element {
         </h1>
         <p style={styles.muted}>
           Select agents{companyName ? ` in ${companyName}` : ""} and set their
-          model and reasoning effort in one action. Every other adapter setting
-          is preserved; the adapter type is never changed.
+          model, reasoning effort, and/or role in one action. Every other adapter
+          setting is preserved; the adapter type is never changed.
         </p>
       </header>
 
@@ -583,9 +555,7 @@ export function ModelSwitcherPage(): JSX.Element {
             <ChevronSelect id="ms-model" value={model} onChange={onModelChange}>
               <option value={KEEP}>Leave unchanged</option>
               {MODEL_OPTIONS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
+                <option key={m} value={m}>{m}</option>
               ))}
             </ChevronSelect>
           </div>
@@ -597,9 +567,19 @@ export function ModelSwitcherPage(): JSX.Element {
             <ChevronSelect id="ms-effort" value={effort} onChange={onEffortChange}>
               <option value={KEEP}>Leave unchanged</option>
               {EFFORT_OPTIONS.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </ChevronSelect>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label} htmlFor="ms-role">
+              Role
+            </label>
+            <ChevronSelect id="ms-role" value={role} onChange={onRoleChange}>
+              <option value={KEEP}>Leave unchanged</option>
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r} value={r}>{r}</option>
               ))}
             </ChevronSelect>
           </div>
@@ -615,9 +595,9 @@ export function ModelSwitcherPage(): JSX.Element {
                 cursor: canApply ? "pointer" : "not-allowed",
               }}
               title={
-                patch
+                patch || rolePatch
                   ? `Apply ${describeSelection(selection)} to the selected agents`
-                  : "Pick a model and/or effort to apply"
+                  : "Pick a model, effort, and/or role to apply"
               }
             >
               {applyLabel}
@@ -628,9 +608,9 @@ export function ModelSwitcherPage(): JSX.Element {
         <p style={{ ...styles.muted, marginTop: 12 }}>
           {selectedCount === 0
             ? "Select one or more agents below."
-            : patch
+            : (patch || rolePatch)
               ? `Will set ${describeSelection(selection)} on ${selectedCount} agent${selectedCount === 1 ? "" : "s"}.`
-              : `${selectedCount} selected — choose a model and/or effort to apply.`}
+              : `${selectedCount} selected — choose a model, effort, and/or role to apply.`}
         </p>
       </section>
 
@@ -680,6 +660,7 @@ export function ModelSwitcherPage(): JSX.Element {
                     />
                   </th>
                   <th style={styles.th}>Agent</th>
+                  <th style={styles.th}>Role</th>
                   <th style={styles.th}>Adapter</th>
                   <th style={styles.th}>Model</th>
                   <th style={styles.th}>Effort</th>
@@ -714,13 +695,14 @@ export function ModelSwitcherPage(): JSX.Element {
                       <td style={styles.td}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                           <span style={{ fontWeight: 600 }}>{a.name}</span>
-                          {roleLabel(a) ? (
+                          {a.title ? (
                             <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>
-                              {roleLabel(a)}
+                              {a.title}
                             </span>
                           ) : null}
                         </div>
                       </td>
+                      <td style={styles.td}>{fmtValue(a.role)}</td>
                       <td style={styles.td}>
                         <span style={styles.pill}>{a.adapterType ?? "—"}</span>
                       </td>
