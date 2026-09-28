@@ -37,6 +37,9 @@ export type EffortOption = (typeof EFFORT_OPTIONS)[number];
 export const MODEL_KEY = "model" as const;
 export const EFFORT_KEY = "effort" as const;
 
+/** Max length enforced by the API for the capabilities field. */
+export const CAPABILITIES_MAX_LENGTH = 2000;
+
 // ---------------------------------------------------------------------------
 // Roster shapes — the worker's `roster` data handler returns these, the UI
 // consumes them. Declared here (not in worker.ts) so both bundles share ONE
@@ -55,6 +58,8 @@ export interface RosterRow {
   model: string | null;
   /** Current adapterConfig.effort, or null when unset. */
   effort: string | null;
+  /** Current top-level capabilities string, or null when unset. */
+  capabilities: string | null;
 }
 
 export interface RosterData {
@@ -138,6 +143,14 @@ export function buildAgentPatchBody(
   patch: Record<string, string>,
 ): AgentPatchBody {
   return { adapterConfig: patch, replaceAdapterConfig: false };
+}
+
+/**
+ * Build the PATCH body for updating the top-level capabilities field.
+ * No replaceAdapterConfig flag needed — capabilities is not inside adapterConfig.
+ */
+export function buildCapabilitiesPatch(capabilities: string): { capabilities: string } {
+  return { capabilities };
 }
 
 /** The origin-relative host route for updating a single agent. */
