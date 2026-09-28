@@ -10,8 +10,10 @@ import {
   EFFORT_OPTIONS,
   KEEP,
   UNCONFIGURABLE_STATUSES,
+  CAPABILITIES_MAX_LENGTH,
   buildAdapterConfigPatch,
   buildAgentPatchBody,
+  buildCapabilitiesPatch,
   agentPatchUrl,
   describeSelection,
   type ApplySelection,
@@ -142,6 +144,19 @@ const styles = {
     WebkitAppearance: "none",
     MozAppearance: "none",
   } as React.CSSProperties,
+  textarea: {
+    width: "100%",
+    padding: "8px 10px",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    background: "var(--background)",
+    color: "var(--foreground)",
+    fontSize: 13,
+    fontFamily: FONT,
+    resize: "vertical" as const,
+    minHeight: 72,
+    boxSizing: "border-box" as const,
+  } as React.CSSProperties,
   applyButton: {
     padding: "10px 18px",
     border: "1px solid var(--primary)",
@@ -219,6 +234,16 @@ const styles = {
 function fmtValue(value: string | null): React.ReactNode {
   if (!value) return <span style={{ color: "var(--muted-foreground)" }}>—</span>;
   return <span style={styles.code}>{value}</span>;
+}
+
+function fmtCapabilities(value: string | null): React.ReactNode {
+  if (!value) return <span style={{ color: "var(--muted-foreground)" }}>—</span>;
+  const truncated = value.length > 60 ? `${value.slice(0, 60)}…` : value;
+  return (
+    <span style={{ cursor: "default" }} title={value}>
+      {truncated}
+    </span>
+  );
 }
 
 function roleLabel(row: RosterRow): string | null {
@@ -439,14 +464,22 @@ export function ModelSwitcherPage(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [model, setModel] = useState<ModelOption | typeof KEEP>(KEEP);
   const [effort, setEffort] = useState<EffortOption | typeof KEEP>(KEEP);
+  const [capabilitiesText, setCapabilitiesText] = useState("");
 
   const [applying, setApplying] = useState(false);
+  const [applyingCapabilities, setApplyingCapabilities] = useState(false);
   const [results, setResults] = useState<Map<string, ApplyResult>>(new Map());
 
   const selection: ApplySelection = { model, effort };
   const patch = buildAdapterConfigPatch(selection);
   const selectedCount = selected.size;
-  const canApply = !!patch && selectedCount > 0 && !applying;
+  const canApply = !!patch && selectedCount > 0 && !applying && !applyingCapabilities;
+  const canApplyCapabilities =
+    capabilitiesText.trim().length > 0 &&
+    capabilitiesText.length <= CAPABILITIES_MAX_LENGTH &&
+    selectedCount > 0 &&
+    !applying &&
+    !applyingCapabilities;
 
   // Changing selection or target values clears stale per-agent results.
   const resetTransient = useCallback(() => {
@@ -490,10 +523,16 @@ export function ModelSwitcherPage(): JSX.Element {
     },
     [resetTransient],
   );
+  const onCapabilitiesChange = useCallback(
+    (v: string) => {
+      setCapabilitiesText(v);
+      resetTransient();
+    },
+    [resetTransient],
+  );
 
-  // Apply — a single click performs the bulk PATCH on every selected agent.
-  // The action is explicit (you picked the agents, the model/effort, and hit
-  // Apply) and fully reversible, so there's no extra confirm step in the way.
+  // Apply model/effort — a single click performs the bulk PATCH on every
+  // selected agent. The action is explicit and fully reversible.
   const doApply = useCallback(async () => {
     if (!patch || selectedCount === 0 || applying) return;
     setApplying(true);
@@ -546,7 +585,6 @@ export function ModelSwitcherPage(): JSX.Element {
       });
     }
 
-    // Pull fresh current-value columns so the table reflects what stuck.
     roster.refresh?.();
   }, [
     patch,
@@ -558,7 +596,69 @@ export function ModelSwitcherPage(): JSX.Element {
     roster,
   ]);
 
+  // Apply capabilities — bulk PATCH { capabilities } on every selected agent.
+  const doApplyCapabilities = useCallback(async () => {
+    if (!capabilitiesText.trim() || selectedCount === 0 || applyingCapabilities) return;
+    setApplyingCapabilities(true);
+
+    const body = JSON.stringify(buildCapabilitiesPatch(capabilitiesText));
+    const ids = [...selected];
+    const settled = await Promise.all(
+      ids.map(async (id): Promise<[string, ApplyResult]> => {
+        try {
+          const res = await fetch(agentPatchUrl(id), {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body,
+          });
+          if (!res.ok) return [id, { ok: false, error: await readErrorMessage(res) }];
+          return [id, { ok: true }];
+        } catch (err) {
+          return [id, { ok: false, error: err instanceof Error ? err.message : String(err) }];
+        }
+      }),
+    );
+
+    const nextResults = new Map<string, ApplyResult>(settled);
+    setResults(nextResults);
+    setApplyingCapabilities(false);
+
+    const okIds = new Set(settled.filter(([, r]) => r.ok).map(([id]) => id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of okIds) next.delete(id);
+      return next;
+    });
+
+    const okCount = okIds.size;
+    const failCount = settled.length - okCount;
+    if (failCount === 0) {
+      toast?.({
+        title: `Updated ${okCount} agent${okCount === 1 ? "" : "s"}`,
+        body: "Capabilities updated.",
+        tone: "success",
+      });
+    } else {
+      toast?.({
+        title: `${okCount} updated, ${failCount} failed`,
+        body: "See the per-agent status in the table.",
+        tone: okCount > 0 ? "warn" : "error",
+      });
+    }
+
+    roster.refresh?.();
+  }, [
+    capabilitiesText,
+    selectedCount,
+    applyingCapabilities,
+    selected,
+    toast,
+    roster,
+  ]);
+
   const applyLabel = applying ? "Applying…" : `Apply to ${selectedCount} selected`;
+  const applyCapLabel = applyingCapabilities ? "Applying…" : `Apply to ${selectedCount} selected`;
 
   return (
     <div style={styles.page}>
@@ -568,12 +668,12 @@ export function ModelSwitcherPage(): JSX.Element {
         </h1>
         <p style={styles.muted}>
           Select agents{companyName ? ` in ${companyName}` : ""} and set their
-          model and reasoning effort in one action. Every other adapter setting
-          is preserved; the adapter type is never changed.
+          model, reasoning effort, and/or capabilities in one action. Every
+          other adapter setting is preserved; the adapter type is never changed.
         </p>
       </header>
 
-      {/* Toolbar */}
+      {/* Toolbar — model/effort */}
       <section style={styles.card}>
         <div style={styles.toolbar}>
           <div style={styles.field}>
@@ -634,6 +734,59 @@ export function ModelSwitcherPage(): JSX.Element {
         </p>
       </section>
 
+      {/* Toolbar — capabilities */}
+      <section style={styles.card}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={styles.label} htmlFor="ms-capabilities">
+            Capabilities
+          </label>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+              <textarea
+                id="ms-capabilities"
+                value={capabilitiesText}
+                maxLength={CAPABILITIES_MAX_LENGTH}
+                rows={3}
+                placeholder="Enter capabilities text to apply to all selected agents…"
+                onChange={(e) => onCapabilitiesChange(e.target.value)}
+                style={styles.textarea}
+              />
+              <span style={{ ...styles.muted, textAlign: "right" }}>
+                {capabilitiesText.length} / {CAPABILITIES_MAX_LENGTH}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={doApplyCapabilities}
+              disabled={!canApplyCapabilities}
+              style={{
+                ...styles.applyButton,
+                marginTop: 0,
+                opacity: canApplyCapabilities ? 1 : 0.5,
+                cursor: canApplyCapabilities ? "pointer" : "not-allowed",
+              }}
+              title={
+                selectedCount === 0
+                  ? "Select agents first"
+                  : capabilitiesText.trim().length === 0
+                    ? "Enter capabilities text to apply"
+                    : `Apply capabilities to ${selectedCount} selected agent${selectedCount === 1 ? "" : "s"}`
+              }
+            >
+              {applyCapLabel}
+            </button>
+          </div>
+        </div>
+
+        <p style={{ ...styles.muted, marginTop: 8 }}>
+          {selectedCount === 0
+            ? "Select one or more agents below."
+            : capabilitiesText.trim().length > 0
+              ? `Will overwrite capabilities on ${selectedCount} agent${selectedCount === 1 ? "" : "s"}.`
+              : `${selectedCount} selected — enter capabilities text to apply.`}
+        </p>
+      </section>
+
       {/* Roster table */}
       <section style={styles.card}>
         <div
@@ -683,6 +836,7 @@ export function ModelSwitcherPage(): JSX.Element {
                   <th style={styles.th}>Adapter</th>
                   <th style={styles.th}>Model</th>
                   <th style={styles.th}>Effort</th>
+                  <th style={{ ...styles.th, maxWidth: 200 }}>Capabilities</th>
                   <th style={{ ...styles.th, textAlign: "right" }}>Status</th>
                 </tr>
               </thead>
@@ -726,6 +880,9 @@ export function ModelSwitcherPage(): JSX.Element {
                       </td>
                       <td style={styles.td}>{fmtValue(a.model)}</td>
                       <td style={styles.td}>{fmtValue(a.effort)}</td>
+                      <td style={{ ...styles.td, maxWidth: 200, overflow: "hidden" }}>
+                        {fmtCapabilities(a.capabilities)}
+                      </td>
                       <td style={{ ...styles.td, textAlign: "right" }}>
                         {result ? (
                           result.ok ? (
