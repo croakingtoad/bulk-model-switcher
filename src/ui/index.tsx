@@ -9,14 +9,17 @@ import {
   MODEL_OPTIONS,
   EFFORT_OPTIONS,
   KEEP,
+  KEEP_REPORTS_TO,
+  CLEAR_REPORTS_TO,
   UNCONFIGURABLE_STATUSES,
   buildAdapterConfigPatch,
-  buildAgentPatchBody,
+  buildReportsToPatch,
   agentPatchUrl,
   describeSelection,
   type ApplySelection,
   type EffortOption,
   type ModelOption,
+  type ReportsToSelection,
   type RosterData,
   type RosterRow,
 } from "../shared.js";
@@ -439,14 +442,16 @@ export function ModelSwitcherPage(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [model, setModel] = useState<ModelOption | typeof KEEP>(KEEP);
   const [effort, setEffort] = useState<EffortOption | typeof KEEP>(KEEP);
+  const [reportsTo, setReportsTo] = useState<ReportsToSelection>(KEEP_REPORTS_TO);
 
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Map<string, ApplyResult>>(new Map());
 
   const selection: ApplySelection = { model, effort };
-  const patch = buildAdapterConfigPatch(selection);
+  const adapterPatch = buildAdapterConfigPatch(selection);
+  const reportsToPatch = buildReportsToPatch(reportsTo);
   const selectedCount = selected.size;
-  const canApply = !!patch && selectedCount > 0 && !applying;
+  const canApply = (!!adapterPatch || !!reportsToPatch) && selectedCount > 0 && !applying;
 
   // Changing selection or target values clears stale per-agent results.
   const resetTransient = useCallback(() => {
@@ -490,15 +495,32 @@ export function ModelSwitcherPage(): JSX.Element {
     },
     [resetTransient],
   );
+  const onReportsToChange = useCallback(
+    (v: string) => {
+      setReportsTo(v as ReportsToSelection);
+      resetTransient();
+    },
+    [resetTransient],
+  );
 
   // Apply — a single click performs the bulk PATCH on every selected agent.
   // The action is explicit (you picked the agents, the model/effort, and hit
   // Apply) and fully reversible, so there's no extra confirm step in the way.
   const doApply = useCallback(async () => {
-    if (!patch || selectedCount === 0 || applying) return;
+    if ((!adapterPatch && !reportsToPatch) || selectedCount === 0 || applying) return;
     setApplying(true);
 
-    const body = JSON.stringify(buildAgentPatchBody(patch));
+    // Merge adapterConfig patch and reportsTo into one PATCH body per agent.
+    const bodyObj: Record<string, unknown> = {};
+    if (adapterPatch) {
+      bodyObj.adapterConfig = adapterPatch;
+      bodyObj.replaceAdapterConfig = false;
+    }
+    if (reportsToPatch) {
+      bodyObj.reportsTo = reportsToPatch.reportsTo;
+    }
+    const body = JSON.stringify(bodyObj);
+
     const ids = [...selected];
     const settled = await Promise.all(
       ids.map(async (id): Promise<[string, ApplyResult]> => {
@@ -549,7 +571,8 @@ export function ModelSwitcherPage(): JSX.Element {
     // Pull fresh current-value columns so the table reflects what stuck.
     roster.refresh?.();
   }, [
-    patch,
+    adapterPatch,
+    reportsToPatch,
     selectedCount,
     applying,
     selected,
@@ -604,6 +627,23 @@ export function ModelSwitcherPage(): JSX.Element {
             </ChevronSelect>
           </div>
 
+          <div style={{ ...styles.field, minWidth: 200 }}>
+            <label style={styles.label} htmlFor="ms-reports-to">
+              Reports to
+            </label>
+            <ChevronSelect id="ms-reports-to" value={reportsTo} onChange={onReportsToChange}>
+              <option value={KEEP_REPORTS_TO}>Leave unchanged</option>
+              <option value={CLEAR_REPORTS_TO}>(none — clear)</option>
+              {agents
+                .filter((a) => !selected.has(a.id))
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}{a.role ? ` (${a.role})` : ""}
+                  </option>
+                ))}
+            </ChevronSelect>
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               type="button"
@@ -615,9 +655,9 @@ export function ModelSwitcherPage(): JSX.Element {
                 cursor: canApply ? "pointer" : "not-allowed",
               }}
               title={
-                patch
-                  ? `Apply ${describeSelection(selection)} to the selected agents`
-                  : "Pick a model and/or effort to apply"
+                adapterPatch || reportsToPatch
+                  ? `Apply changes to the selected agents`
+                  : "Pick a field to change"
               }
             >
               {applyLabel}
@@ -628,9 +668,9 @@ export function ModelSwitcherPage(): JSX.Element {
         <p style={{ ...styles.muted, marginTop: 12 }}>
           {selectedCount === 0
             ? "Select one or more agents below."
-            : patch
-              ? `Will set ${describeSelection(selection)} on ${selectedCount} agent${selectedCount === 1 ? "" : "s"}.`
-              : `${selectedCount} selected — choose a model and/or effort to apply.`}
+            : adapterPatch || reportsToPatch
+              ? `Will update ${selectedCount} agent${selectedCount === 1 ? "" : "s"}${adapterPatch ? `: ${describeSelection(selection)}` : ""}${reportsToPatch ? `${adapterPatch ? "; " : ": "}reportsTo → ${reportsToPatch.reportsTo ?? "(cleared)"}` : ""}.`
+              : `${selectedCount} selected — choose a field to change.`}
         </p>
       </section>
 
@@ -683,6 +723,7 @@ export function ModelSwitcherPage(): JSX.Element {
                   <th style={styles.th}>Adapter</th>
                   <th style={styles.th}>Model</th>
                   <th style={styles.th}>Effort</th>
+                  <th style={styles.th}>Reports to</th>
                   <th style={{ ...styles.th, textAlign: "right" }}>Status</th>
                 </tr>
               </thead>
@@ -691,6 +732,14 @@ export function ModelSwitcherPage(): JSX.Element {
                   const isSelectable = selectableIds.has(a.id);
                   const isSelected = selected.has(a.id);
                   const result = results.get(a.id);
+                  const reportsToAgent = a.reportsTo
+                    ? agents.find((r) => r.id === a.reportsTo) ?? null
+                    : null;
+                  const reportsToName = reportsToAgent
+                    ? reportsToAgent.name
+                    : a.reportsTo
+                      ? `${a.reportsTo.slice(0, 8)}…`
+                      : null;
                   return (
                     <tr
                       key={a.id}
@@ -726,6 +775,7 @@ export function ModelSwitcherPage(): JSX.Element {
                       </td>
                       <td style={styles.td}>{fmtValue(a.model)}</td>
                       <td style={styles.td}>{fmtValue(a.effort)}</td>
+                      <td style={styles.td}>{fmtValue(reportsToName)}</td>
                       <td style={{ ...styles.td, textAlign: "right" }}>
                         {result ? (
                           result.ok ? (

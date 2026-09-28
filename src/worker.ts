@@ -36,6 +36,7 @@ function toRosterRow(agent: any): RosterRow {
     adapterType: str(agent?.adapterType),
     model,
     effort,
+    reportsTo: str(agent?.reportsTo),
   };
 }
 
