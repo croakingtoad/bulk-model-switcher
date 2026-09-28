@@ -23,6 +23,13 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** Normalize a desiredSkills entry (plain string or {key,…} object) to its key. */
+function skillKey(s: unknown): string {
+  if (typeof s === "string") return s;
+  const o = s as Record<string, unknown>;
+  return o && typeof o.key === "string" ? o.key : "";
+}
+
 /** Map one host Agent into the flat RosterRow the page renders. */
 function toRosterRow(agent: any): RosterRow {
   const id = String(agent?.id ?? "");
@@ -36,6 +43,10 @@ function toRosterRow(agent: any): RosterRow {
     adapterType: str(agent?.adapterType),
     model,
     effort,
+    capabilities: str(agent?.capabilities),
+    desiredSkills: ((agent?.desiredSkills ?? []) as unknown[]).map(skillKey).filter(Boolean),
+    reportsTo: str(agent?.reportsTo),
+    budgetMonthlyCents: typeof agent?.budgetMonthlyCents === "number" ? agent.budgetMonthlyCents : null,
   };
 }
 
@@ -56,7 +67,8 @@ async function resolveCompanyName(ctx: any, companyId: string): Promise<string |
 const plugin = definePlugin({
   async setup(ctx: any) {
     // 'roster' → the company's agents projected to { id, name, role, title,
-    // status, adapterType, model, effort }, plus the resolved company name.
+    // status, adapterType, model, effort, capabilities, desiredSkills,
+    // reportsTo, budgetMonthlyCents }, plus the resolved company name.
     // Read after every apply so current-value columns reflect the new state.
     ctx.data.register("roster", async (input: any): Promise<RosterData> => {
       const companyId = String(input?.companyId ?? "");

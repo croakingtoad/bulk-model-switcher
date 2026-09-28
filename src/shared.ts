@@ -48,6 +48,9 @@ export type AgentRole = (typeof ROLE_OPTIONS)[number];
 export const MODEL_KEY = "model" as const;
 export const EFFORT_KEY = "effort" as const;
 
+/** Max length enforced by the API for the capabilities field. */
+export const CAPABILITIES_MAX_LENGTH = 2000;
+
 // ---------------------------------------------------------------------------
 // Roster shapes — the worker's `roster` data handler returns these, the UI
 // consumes them. Declared here (not in worker.ts) so both bundles share ONE
@@ -66,6 +69,14 @@ export interface RosterRow {
   model: string | null;
   /** Current adapterConfig.effort, or null when unset. */
   effort: string | null;
+  /** Current top-level capabilities string, or null when unset. */
+  capabilities: string | null;
+  /** Current desiredSkills, normalized to string keys. */
+  desiredSkills: string[];
+  /** Agent UUID this agent reports to, or null when unset. */
+  reportsTo: string | null;
+  /** Current budgetMonthlyCents, or null when unset. */
+  budgetMonthlyCents: number | null;
 }
 
 export interface RosterData {
@@ -159,6 +170,78 @@ export function buildAgentPatchBody(
 /** The origin-relative host route for updating a single agent. */
 export function agentPatchUrl(agentId: string): string {
   return `/api/agents/${encodeURIComponent(agentId)}`;
+}
+
+/**
+ * Build the PATCH body for updating the top-level capabilities field.
+ * No replaceAdapterConfig flag needed — capabilities is not inside adapterConfig.
+ */
+export function buildCapabilitiesPatch(capabilities: string): { capabilities: string } {
+  return { capabilities };
+}
+
+// ---------------------------------------------------------------------------
+// Skills delta — add/remove semantics for desiredSkills bulk-edit
+// ---------------------------------------------------------------------------
+
+export interface SkillsDelta {
+  add: string[];
+  remove: string[];
+}
+
+/**
+ * Apply an add/remove delta to an agent's current skill list.
+ * Preserves skills not mentioned in the delta; deduplicates the result.
+ */
+export function applySkillsDelta(current: string[], delta: SkillsDelta): string[] {
+  const set = new Set(current);
+  for (const k of delta.add) set.add(k);
+  for (const k of delta.remove) set.delete(k);
+  return Array.from(set);
+}
+
+/** Build the PATCH body fragment for a desiredSkills update. */
+export function buildSkillsPatch(mergedSkills: string[]): { desiredSkills: string[] } {
+  return { desiredSkills: mergedSkills };
+}
+
+// ---------------------------------------------------------------------------
+// ReportsTo patch
+// ---------------------------------------------------------------------------
+
+/** Sentinel meaning "leave reportsTo unchanged". */
+export const KEEP_REPORTS_TO = "__keep_reports_to__" as const;
+export type KeepReportsTo = typeof KEEP_REPORTS_TO;
+
+/** Sentinel meaning "clear the reportsTo relationship". */
+export const CLEAR_REPORTS_TO = "__clear_reports_to__" as const;
+export type ClearReportsTo = typeof CLEAR_REPORTS_TO;
+
+export type ReportsToSelection = string | KeepReportsTo | ClearReportsTo;
+
+/**
+ * Build the reportsTo patch body. Pass null to clear, a UUID to set.
+ * Returns null when selection is KEEP_REPORTS_TO (no-op).
+ */
+export function buildReportsToPatch(
+  selection: ReportsToSelection,
+): { reportsTo: string | null } | null {
+  if (selection === KEEP_REPORTS_TO) return null;
+  return { reportsTo: selection === CLEAR_REPORTS_TO ? null : selection };
+}
+
+// ---------------------------------------------------------------------------
+// Budget helpers
+// ---------------------------------------------------------------------------
+
+/** Convert a dollar amount (user input) to integer cents for the API. */
+export function dollarsToCents(dollars: number): number {
+  return Math.round(dollars * 100);
+}
+
+/** Build the patch body for updating budgetMonthlyCents. */
+export function buildBudgetPatch(budgetMonthlyCents: number): { budgetMonthlyCents: number } {
+  return { budgetMonthlyCents };
 }
 
 // ---------------------------------------------------------------------------
