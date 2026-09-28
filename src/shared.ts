@@ -55,6 +55,8 @@ export interface RosterRow {
   model: string | null;
   /** Current adapterConfig.effort, or null when unset. */
   effort: string | null;
+  /** Current budgetMonthlyCents, or null when unset. */
+  budgetMonthlyCents: number | null;
 }
 
 export interface RosterData {
@@ -143,6 +145,20 @@ export function buildAgentPatchBody(
 /** The origin-relative host route for updating a single agent. */
 export function agentPatchUrl(agentId: string): string {
   return `/api/agents/${encodeURIComponent(agentId)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Budget helpers
+// ---------------------------------------------------------------------------
+
+/** Convert a dollar amount (user input) to integer cents for the API. */
+export function dollarsToCents(dollars: number): number {
+  return Math.round(dollars * 100);
+}
+
+/** Build the patch body for updating budgetMonthlyCents. */
+export function buildBudgetPatch(budgetMonthlyCents: number): { budgetMonthlyCents: number } {
+  return { budgetMonthlyCents };
 }
 
 // ---------------------------------------------------------------------------

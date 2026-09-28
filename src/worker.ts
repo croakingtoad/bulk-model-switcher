@@ -36,6 +36,7 @@ function toRosterRow(agent: any): RosterRow {
     adapterType: str(agent?.adapterType),
     model,
     effort,
+    budgetMonthlyCents: typeof agent?.budgetMonthlyCents === "number" ? agent.budgetMonthlyCents : null,
   };
 }
 
@@ -56,7 +57,7 @@ async function resolveCompanyName(ctx: any, companyId: string): Promise<string |
 const plugin = definePlugin({
   async setup(ctx: any) {
     // 'roster' → the company's agents projected to { id, name, role, title,
-    // status, adapterType, model, effort }, plus the resolved company name.
+    // status, adapterType, model, effort, budgetMonthlyCents }, plus the resolved company name.
     // Read after every apply so current-value columns reflect the new state.
     ctx.data.register("roster", async (input: any): Promise<RosterData> => {
       const companyId = String(input?.companyId ?? "");

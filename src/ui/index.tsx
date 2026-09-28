@@ -12,6 +12,8 @@ import {
   UNCONFIGURABLE_STATUSES,
   buildAdapterConfigPatch,
   buildAgentPatchBody,
+  buildBudgetPatch,
+  dollarsToCents,
   agentPatchUrl,
   describeSelection,
   type ApplySelection,
@@ -25,7 +27,8 @@ import {
 // Bulk Model Switcher — plugin UI (single page export: ModelSwitcherPage).
 //
 // Mounts at /:companyPrefix/bulk-model-switcher. Multiselect any set of the
-// company's agents and set their model and/or reasoning effort in one action.
+// company's agents and set their model, reasoning effort, and/or monthly budget
+// in one action.
 //
 // Read  path: usePluginData("roster") ← worker's ctx.agents.list.
 // Write path: same-origin `PATCH /api/agents/:id` from THIS page, riding the
@@ -142,6 +145,17 @@ const styles = {
     WebkitAppearance: "none",
     MozAppearance: "none",
   } as React.CSSProperties,
+  input: {
+    width: "100%",
+    padding: "8px 10px",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    background: "var(--background)",
+    color: "var(--foreground)",
+    fontSize: 13,
+    fontFamily: FONT,
+    boxSizing: "border-box" as const,
+  } as React.CSSProperties,
   applyButton: {
     padding: "10px 18px",
     border: "1px solid var(--primary)",
@@ -219,6 +233,11 @@ const styles = {
 function fmtValue(value: string | null): React.ReactNode {
   if (!value) return <span style={{ color: "var(--muted-foreground)" }}>—</span>;
   return <span style={styles.code}>{value}</span>;
+}
+
+function fmtBudget(cents: number | null): React.ReactNode {
+  if (cents === null) return <span style={{ color: "var(--muted-foreground)" }}>—</span>;
+  return <span style={styles.code}>${(cents / 100).toFixed(2)}/mo</span>;
 }
 
 function roleLabel(row: RosterRow): string | null {
@@ -339,9 +358,9 @@ export function ModelSwitcherSettings(): JSX.Element {
       <h2 style={styles.sectionTitle}>Bulk Model Switcher</h2>
       <p style={{ ...styles.muted, lineHeight: 1.5 }}>
         There's nothing to configure here. Bulk Model Switcher lives on its own
-        page, where you can multiselect this company's agents and set their model
-        and reasoning effort in one action. Every other adapter setting is
-        preserved, and the adapter type is never changed.
+        page, where you can multiselect this company's agents and set their model,
+        reasoning effort, and monthly budget in one action. Every other adapter
+        setting is preserved, and the adapter type is never changed.
       </p>
       <div>
         <a
@@ -439,14 +458,22 @@ export function ModelSwitcherPage(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [model, setModel] = useState<ModelOption | typeof KEEP>(KEEP);
   const [effort, setEffort] = useState<EffortOption | typeof KEEP>(KEEP);
+  // Budget in dollars (empty string = leave unchanged).
+  const [budget, setBudget] = useState<string>("");
 
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Map<string, ApplyResult>>(new Map());
 
   const selection: ApplySelection = { model, effort };
   const patch = buildAdapterConfigPatch(selection);
+
+  // Parse budget input: null means "leave unchanged", a number means set it.
+  const budgetDollars = budget !== "" ? parseFloat(budget) : null;
+  const budgetValid = budgetDollars === null || (!isNaN(budgetDollars) && budgetDollars >= 0);
+  const budgetCents = budgetDollars !== null && budgetValid ? dollarsToCents(budgetDollars) : null;
+
   const selectedCount = selected.size;
-  const canApply = !!patch && selectedCount > 0 && !applying;
+  const canApply = (!!patch || budgetCents !== null) && selectedCount > 0 && !applying && budgetValid;
 
   // Changing selection or target values clears stale per-agent results.
   const resetTransient = useCallback(() => {
@@ -490,15 +517,27 @@ export function ModelSwitcherPage(): JSX.Element {
     },
     [resetTransient],
   );
+  const onBudgetChange = useCallback(
+    (v: string) => {
+      setBudget(v);
+      resetTransient();
+    },
+    [resetTransient],
+  );
 
   // Apply — a single click performs the bulk PATCH on every selected agent.
-  // The action is explicit (you picked the agents, the model/effort, and hit
-  // Apply) and fully reversible, so there's no extra confirm step in the way.
+  // The action is explicit (you picked the agents, the model/effort/budget, and
+  // hit Apply) and fully reversible, so there's no extra confirm step in the way.
   const doApply = useCallback(async () => {
-    if (!patch || selectedCount === 0 || applying) return;
+    if ((!patch && budgetCents === null) || selectedCount === 0 || applying) return;
     setApplying(true);
 
-    const body = JSON.stringify(buildAgentPatchBody(patch));
+    // Build a single merged PATCH body: adapter fields + budget, whichever are set.
+    const combinedBody: Record<string, unknown> = {
+      ...(patch ? buildAgentPatchBody(patch) : {}),
+      ...(budgetCents !== null ? buildBudgetPatch(budgetCents) : {}),
+    };
+    const body = JSON.stringify(combinedBody);
     const ids = [...selected];
     const settled = await Promise.all(
       ids.map(async (id): Promise<[string, ApplyResult]> => {
@@ -532,10 +571,17 @@ export function ModelSwitcherPage(): JSX.Element {
 
     const okCount = okIds.size;
     const failCount = settled.length - okCount;
+
+    // Build a human-readable summary of what changed.
+    const changeParts: string[] = [];
+    if (patch) changeParts.push(describeSelection(selection));
+    if (budgetCents !== null) changeParts.push(`budget → $${(budgetCents / 100).toFixed(2)}/mo`);
+    const changeDesc = changeParts.join(", ");
+
     if (failCount === 0) {
       toast?.({
         title: `Updated ${okCount} agent${okCount === 1 ? "" : "s"}`,
-        body: describeSelection(selection),
+        body: changeDesc,
         tone: "success",
       });
     } else {
@@ -550,6 +596,7 @@ export function ModelSwitcherPage(): JSX.Element {
     roster.refresh?.();
   }, [
     patch,
+    budgetCents,
     selectedCount,
     applying,
     selected,
@@ -560,6 +607,14 @@ export function ModelSwitcherPage(): JSX.Element {
 
   const applyLabel = applying ? "Applying…" : `Apply to ${selectedCount} selected`;
 
+  // Describe the pending apply for the hint text below the toolbar.
+  const pendingDesc = (() => {
+    const parts: string[] = [];
+    if (patch) parts.push(describeSelection(selection));
+    if (budgetCents !== null) parts.push(`budget → $${(budgetCents / 100).toFixed(2)}/mo`);
+    return parts.join(", ");
+  })();
+
   return (
     <div style={styles.page}>
       <header style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -568,8 +623,8 @@ export function ModelSwitcherPage(): JSX.Element {
         </h1>
         <p style={styles.muted}>
           Select agents{companyName ? ` in ${companyName}` : ""} and set their
-          model and reasoning effort in one action. Every other adapter setting
-          is preserved; the adapter type is never changed.
+          model, reasoning effort, and monthly budget in one action. Every other
+          adapter setting is preserved; the adapter type is never changed.
         </p>
       </header>
 
@@ -604,6 +659,25 @@ export function ModelSwitcherPage(): JSX.Element {
             </ChevronSelect>
           </div>
 
+          <div style={{ ...styles.field, minWidth: 140 }}>
+            <label style={styles.label} htmlFor="ms-budget">
+              Monthly budget ($)
+            </label>
+            <input
+              id="ms-budget"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Leave unchanged"
+              value={budget}
+              onChange={(e) => onBudgetChange(e.target.value)}
+              style={{
+                ...styles.input,
+                borderColor: !budgetValid ? "var(--destructive)" : "var(--border)",
+              }}
+            />
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               type="button"
@@ -615,9 +689,9 @@ export function ModelSwitcherPage(): JSX.Element {
                 cursor: canApply ? "pointer" : "not-allowed",
               }}
               title={
-                patch
-                  ? `Apply ${describeSelection(selection)} to the selected agents`
-                  : "Pick a model and/or effort to apply"
+                canApply
+                  ? `Apply ${pendingDesc} to the selected agents`
+                  : "Pick at least one field to change and select agents"
               }
             >
               {applyLabel}
@@ -628,9 +702,9 @@ export function ModelSwitcherPage(): JSX.Element {
         <p style={{ ...styles.muted, marginTop: 12 }}>
           {selectedCount === 0
             ? "Select one or more agents below."
-            : patch
-              ? `Will set ${describeSelection(selection)} on ${selectedCount} agent${selectedCount === 1 ? "" : "s"}.`
-              : `${selectedCount} selected — choose a model and/or effort to apply.`}
+            : pendingDesc
+              ? `Will set ${pendingDesc} on ${selectedCount} agent${selectedCount === 1 ? "" : "s"}.`
+              : `${selectedCount} selected — choose a model, effort, and/or budget to apply.`}
         </p>
       </section>
 
@@ -683,6 +757,7 @@ export function ModelSwitcherPage(): JSX.Element {
                   <th style={styles.th}>Adapter</th>
                   <th style={styles.th}>Model</th>
                   <th style={styles.th}>Effort</th>
+                  <th style={styles.th}>Budget/mo</th>
                   <th style={{ ...styles.th, textAlign: "right" }}>Status</th>
                 </tr>
               </thead>
@@ -726,6 +801,7 @@ export function ModelSwitcherPage(): JSX.Element {
                       </td>
                       <td style={styles.td}>{fmtValue(a.model)}</td>
                       <td style={styles.td}>{fmtValue(a.effort)}</td>
+                      <td style={styles.td}>{fmtBudget(a.budgetMonthlyCents)}</td>
                       <td style={{ ...styles.td, textAlign: "right" }}>
                         {result ? (
                           result.ok ? (
